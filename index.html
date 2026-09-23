@@ -1,0 +1,1057 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>How xSAGA turns CNN detections into satellite counts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&display=swap" rel="stylesheet">
+<style>
+:root {
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  --bg: #E4E9F2;
+  --surface: #F3F5FA;
+  --ink: #121A36;
+  --ink-2: #4A5576;
+  --rule: #C4CCDD;
+  --accent: #2A55C9;
+  --stage: #0A1433;
+  --sans: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+  --serif: "Literata", Georgia, "Times New Roman", serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0B1128;
+    --surface: #131B3A;
+    --ink: #E4E9F7;
+    --ink-2: #9CA7C8;
+    --rule: #28335C;
+    --accent: #8DB8FF;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0B1128;
+  --surface: #131B3A;
+  --ink: #E4E9F7;
+  --ink-2: #9CA7C8;
+  --rule: #28335C;
+  --accent: #8DB8FF;
+}
+*, *::before, *::after { box-sizing: inherit; }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 17px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+main { max-width: 1180px; margin: 0 auto; padding: 28px 20px 48px; }
+header { margin-bottom: 22px; }
+h1 {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: clamp(1.55rem, 3.1vw, 2.35rem);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  margin: 0 0 10px;
+  max-width: 26ch;
+}
+.lede { margin: 0; max-width: 70ch; color: var(--ink-2); }
+.lede a, footer a { color: var(--accent); }
+
+.stage {
+  position: relative;
+  background: var(--stage);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 18px 40px -24px rgba(8, 16, 48, 0.55);
+}
+canvas { display: block; width: 100%; height: auto; }
+
+.controls {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 14px;
+  font-family: var(--sans);
+}
+.btn {
+  flex: none;
+  width: 42px; height: 42px;
+  display: grid; place-items: center;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 11px;
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { width: 50px; height: 50px; border-radius: 50%; background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.btn svg { width: 18px; height: 18px; }
+.btn.primary svg { width: 20px; height: 20px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.scrub { flex: 1; min-width: 60px; accent-color: var(--accent); height: 28px; }
+.time { flex: none; font-size: 14px; color: var(--ink-2); font-variant-numeric: tabular-nums; min-width: 88px; text-align: right; }
+
+.steps {
+  list-style: none; margin: 16px 0 0; padding: 0;
+  display: flex; flex-wrap: wrap; gap: 6px;
+  font-family: var(--sans); font-size: 14px;
+}
+.steps button {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 5px 12px 5px 5px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+}
+.steps button .n {
+  display: grid; place-items: center;
+  width: 24px; height: 24px; border-radius: 50%;
+  background: var(--surface); color: var(--ink-2);
+  font-size: 12px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.steps button:hover { border-color: var(--accent); color: var(--ink); }
+.steps button[aria-current="step"] { border-color: var(--accent); color: var(--ink); }
+.steps button[aria-current="step"] .n { background: var(--accent); color: var(--bg); }
+
+.caption {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: minmax(0, 170px) minmax(0, 1fr);
+  gap: 8px 28px;
+}
+.caption .where { font-family: var(--sans); font-size: 14px; color: var(--ink-2); padding-top: 6px; }
+.caption h2 { font-family: var(--serif); font-weight: 600; font-size: 1.35rem; line-height: 1.25; margin: 0 0 6px; }
+.caption p { margin: 0; max-width: 68ch; line-height: 1.7; }
+@media (max-width: 700px) {
+  body { font-size: 16px; }
+  main { padding: 18px 14px 40px; }
+  .caption { grid-template-columns: 1fr; }
+  .caption .where { padding-top: 0; }
+  .steps .lbl { display: none; }
+  .steps button { padding: 5px; }
+  .time { min-width: 0; font-size: 13px; }
+  .controls { gap: 8px; }
+  .btn { width: 38px; height: 38px; }
+}
+footer { margin-top: 30px; font-size: 14px; line-height: 1.6; color: var(--ink-2); max-width: 78ch; font-family: var(--sans); }
+footer p { margin: 0 0 8px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>How xSAGA turns neural-network detections into satellite counts</h1>
+    <p class="lede">An animated walk through the correction scheme in Figure 4 of <a href="https://doi.org/10.3847/1538-4357/ac4eea">Wu et al. (2022), ApJ 927, 121</a>: select low-redshift galaxies with a CNN, then correct for false positives, low-z galaxies that aren't satellites, and the satellites the CNN missed.</p>
+  </header>
+
+  <div class="stage" id="stage">
+    <canvas id="cv" role="img" aria-label="Animated diagram of the xSAGA satellite selection and correction process. The caption below describes each step."></canvas>
+  </div>
+
+  <div class="controls">
+    <button class="btn" id="prev" type="button" aria-label="Previous step">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+    </button>
+    <button class="btn primary" id="play" type="button" aria-label="Pause">
+      <svg id="icoPause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+      <svg id="icoPlay" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>
+      <svg id="icoAgain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/></svg>
+    </button>
+    <button class="btn" id="next" type="button" aria-label="Next step">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+    </button>
+    <input class="scrub" id="scrub" type="range" min="0" max="100" step="0.01" value="0" aria-label="Animation position">
+    <span class="time" id="time">0:00 / 0:00</span>
+  </div>
+
+  <ol class="steps" id="steps" aria-label="Steps"></ol>
+
+  <section class="caption" aria-live="polite">
+    <div class="where" id="where">Step 1 of 10</div>
+    <div>
+      <h2 id="capTitle"></h2>
+      <p id="capBody"></p>
+    </div>
+  </section>
+
+  <footer>
+    <p>The single host shown in steps 1–9 is a toy example: its number of false positives and non-satellites is exaggerated so each correction is visible, and its numbers are chosen to divide evenly. The survey values (⟨Σ<sub>FP</sub>⟩ = 3.04 deg<sup>−2</sup>, ⟨n<sub>nonsat</sub>⟩ = 0.0142 Mpc<sup>−3</sup>, ⟨C⟩ = 0.6, and the sample sizes) are taken from the paper. The stacked profile in the last step is schematic, in the spirit of the paper's Figure 19.</p>
+    <p>Keyboard: space to play or pause, left and right arrows to move between steps.</p>
+  </footer>
+</main>
+
+<script>
+(() => {
+"use strict";
+const TAU = Math.PI * 2;
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const lin01 = (t, a, b) => clamp((t - a) / (b - a));
+function rng(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* ---------- scenes ---------- */
+const scenes = [
+  { short: "The search area", title: "One host, many candidates", dur: 9,
+    body: "Start with one spectroscopically confirmed host galaxy from the NASA-Sloan Atlas, at 0.01 &lt; <i>z</i> &lt; 0.03. Every faint object nearby that passes the SAGA photometric cuts is a candidate satellite. xSAGA searches between 36 projected kpc, where the host's own light gets shredded into false sources, and 300 kpc, roughly the virial radius of a Milky Way–mass halo." },
+  { short: "Hidden depth", title: "The sky hides distance", dur: 11,
+    body: "An image is flat. Seen from the side, most candidates are background galaxies far behind the host. Only a handful are at low redshift (<i>z</i> &lt; 0.03), and not all of those live in the host's halo: some are unrelated dwarfs in front of or behind it that happen to line up on the sky." },
+  { short: "CNN selection", title: "The CNN inspects every cutout", dur: 13,
+    body: "A convolutional neural network trained on 112,016 SAGA spectroscopic redshifts looks at a 38″ <i>grz</i> Legacy Survey cutout of each candidate and returns p<sub>CNN</sub>, a score for how likely it is to be at <i>z</i> &lt; 0.03. Candidates scoring above 0.5 are selected. Across 4.4 million candidates, the CNN selected 111,343." },
+  { short: "What it got right", title: "What the CNN actually selected", dur: 9.5,
+    body: "Here we peek at the truth, which is only known in the spectroscopic SAGA fields. The selection mixes real satellites (true positives) with high-redshift interlopers (false positives) and low-z galaxies at the wrong distance (non-satellites), while some real satellites are missed (false negatives). In real data every selected galaxy looks the same, so each correction below subtracts or scales by an expected number rather than removing specific galaxies. This toy host is exaggerated: real hosts average about 0.2 false positives and 0.4 non-satellites." },
+  { short: "False positives", title: "Correction 1: subtract false positives", dur: 10,
+    body: "Misclassified background galaxies are spread roughly evenly across the sky. Cross-validation gives a false-positive surface density of ⟨Σ<sub>FP</sub>⟩ = 3.04 deg<sup>−2</sup>, so xSAGA subtracts that density times the solid angle Ω of each radial annulus. Of the three contamination corrections the paper tested, this area-based one recovered the true count best, at 1.01 ± 0.08 times the correct number." },
+  { short: "Non-satellites", title: "Correction 2: subtract non-satellites", dur: 12.5,
+    body: "Some selected galaxies really are at <i>z</i> &lt; 0.03, so the CNN was right about them, but they sit in front of or behind the host rather than in its halo. xSAGA assumes these have a constant volume density, ⟨<i>n</i><sub>nonsat</sub>⟩ = 0.0142 Mpc<sup>−3</sup>, measured from 0.02 &lt; <i>z</i> &lt; 0.03 galaxies in SAGA fields (unrelated to the SAGA hosts at <i>z</i> ≈ 0.008). It subtracts that density times the pencil-beam volume <i>V</i> outside the host's redshift slice of Δ<i>z</i> = ±0.005." },
+  { short: "Incompleteness", title: "Correction 3: account for missed satellites", dur: 9.5,
+    body: "The CNN recovers only about 60% of true low-z galaxies (⟨<i>C</i>⟩ = 0.6 in cross-validation), and does worse for faint and more distant objects. So once contaminants are removed, each remaining detection stands for 1/0.6 ≈ 1.7 satellites. The missed galaxies are never identified individually; they are accounted for on average." },
+  { short: "Corrected count", title: "The corrected count", dur: 8,
+    body: "Put together, <i>N</i><sub>sat</sub> = (<i>N</i><sub>pred</sub> − ⟨Σ<sub>FP</sub>⟩Ω − ⟨<i>n</i><sub>nonsat</sub>⟩<i>V</i>) / ⟨<i>C</i>⟩. For this toy host, (10 − 2 − 2) / 0.6 = 10, the true number. For a single real host the answer is noisy, because the corrections are averages, but those errors wash out when thousands of hosts are combined." },
+  { short: "Radial profile", title: "Correcting the radial profile", dur: 10,
+    body: "The counting is done in annular bins of projected radius. Contaminants scale with area, so more are subtracted at large radii. That means the corrections change the shape of the cumulative profile <i>N</i><sub>sat</sub>(&lt;<i>r</i>), not just its total." },
+  { short: "Stacking hosts", title: "Stacking thousands of hosts", dur: 13,
+    body: "Any single host is noisy. Stacked over 7,542 isolated hosts, 11,449 CNN-selected galaxies become 16,241 estimated satellites brighter than <i>M</i><sub><i>r</i></sub> = −15, and the bootstrap scatter on the mean profile shrinks as hosts are added. That statistical power lets xSAGA measure how satellite richness depends on host mass, morphology, and magnitude gap. The profile drawn here is schematic." }
+];
+const starts = []; let TOTAL = 0;
+for (const s of scenes) { starts.push(TOTAL); TOTAL += s.dur; }
+const sceneAt = T => { let i = 0; while (i < scenes.length - 1 && T >= starts[i + 1]) i++; return i; };
+
+/* ---------- colors ---------- */
+const COL = {
+  sat: "#3FD8B8", fp: "#FF7A66", ns: "#F5C451", fn: "#B59CFF",
+  neutral: "#EEF2FF", corr: "#8DB8FF",
+  label: "rgba(226,233,255,0.86)", soft: "rgba(200,212,245,0.62)", faint: "rgba(190,205,255,0.18)"
+};
+const hex = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+const rgba = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
+const mix = (h1, h2, t) => { const a = hex(h1), b = hex(h2); return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)]; };
+const SANS = '"Instrument Sans", "Helvetica Neue", Arial, sans-serif';
+const SERIF = '"Literata", Georgia, "Times New Roman", serif';
+
+/* ---------- the toy host's candidates ---------- */
+const rand = rng(20220309);
+const gauss = () => { let u = 0; while (!u) u = rand(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * rand()); };
+const objs = [];
+const farFrom = (x, y, d) => objs.every(o => Math.hypot(o.x - x, o.y - y) >= d);
+function atRadius(r) {
+  for (let k = 0; k < 400; k++) {
+    const a = rand() * TAU, x = r * Math.cos(a), y = r * Math.sin(a);
+    if (farFrom(x, y, 34)) return [x, y];
+  }
+  return [r, 0];
+}
+function lowzLook(o) {
+  o.size = 5 + rand() * 2.4; o.q = 0.5 + rand() * 0.42;
+  o.core = [236, 242, 255]; o.mid = [140 + rand() * 30, 172 + rand() * 25, 255];
+}
+function bgLook(o) {
+  o.size = 1.8 + rand() * 1.9; o.q = 0.5 + rand() * 0.5;
+  const w = rand(); o.core = [255, 244, 226]; o.mid = [255, 168 + w * 60, 108 + w * 60];
+}
+// ten true satellites; four of them are compact and will be missed by the CNN
+const satR = [58, 80, 104, 128, 151, 176, 203, 231, 259, 287];
+const fnIdx = new Set([1, 4, 7, 9]);
+satR.forEach((r, i) => {
+  const [x, y] = atRadius(r);
+  const o = { x, y, type: "sat", z: 0.02 + (rand() - 0.5) * 0.0075, ang: rand() * Math.PI };
+  if (fnIdx.has(i)) {
+    o.fn = true; o.sel = false; o.size = 3.3 + rand() * 0.8; o.q = 0.6 + rand() * 0.3;
+    o.core = [244, 240, 250]; o.mid = [205, 190, 228]; o.p = 0.21 + rand() * 0.22;
+  } else { o.sel = true; lowzLook(o); o.p = 0.64 + rand() * 0.32; }
+  objs.push(o);
+});
+// two low-z galaxies that are not in the halo
+[[168, 0.011], [244, 0.028]].forEach(([r, z]) => {
+  const [x, y] = atRadius(r);
+  const o = { x, y, type: "ns", z, sel: true, ang: rand() * Math.PI }; lowzLook(o); o.p = 0.56 + rand() * 0.25;
+  objs.push(o);
+});
+// two background galaxies the CNN mistakes for low-z
+[[118, 0.046], [272, 0.063]].forEach(([r, z]) => {
+  const [x, y] = atRadius(r);
+  const o = { x, y, type: "bg", fp: true, z, sel: true, ang: rand() * Math.PI };
+  lowzLook(o); o.size = 4.3 + rand() * 0.9; o.mid = [185, 180, 240]; o.p = 0.52 + rand() * 0.09;
+  objs.push(o);
+});
+// ordinary background
+let guard = 0;
+while (objs.filter(o => o.type === "bg" && !o.fp).length < 150 && guard++ < 20000) {
+  const x = (rand() * 2 - 1) * 326, y = (rand() * 2 - 1) * 326;
+  if (Math.hypot(x, y) < 50 || !farFrom(x, y, 17)) continue;
+  const o = { x, y, type: "bg", z: 0.034 + 0.266 * Math.pow(rand(), 1.5), sel: false, ang: rand() * Math.PI };
+  bgLook(o); o.p = Math.pow(rand(), 3) * 0.3;
+  objs.push(o);
+}
+for (const o of objs) {
+  o.r = Math.hypot(o.x, o.y);
+  const a = Math.atan2(o.y, o.x);
+  o.frac = (((a + Math.PI / 2) % TAU) + TAU) % TAU / TAU;
+  o.st = rand();
+}
+const bySweep = objs.filter(o => o.sel).sort((a, b) => a.frac - b.frac);
+let nfp = 0, nns = 0, ntp = 0;
+const tokens = bySweep.map((o, j) => {
+  const t = { o, j, kind: o.fp ? "fp" : o.type === "ns" ? "ns" : "tp" };
+  t.k = t.kind === "fp" ? nfp++ : t.kind === "ns" ? nns++ : ntp++;
+  return t;
+});
+const inAnnulus = o => o.r > 60 && o.r < 295;
+const featured = objs.filter(o => o.sel || o.fn || (o.type === "bg" && inAnnulus(o) && rand() < 0.07))
+  .sort((a, b) => a.frac - b.frac);
+const classColor = o => o.fp ? COL.fp : o.type === "ns" ? COL.ns : COL.sat;
+
+// stacked-profile bootstrap curves (schematic)
+const boot = Array.from({ length: 34 }, () => [gauss(), gauss(), rand() * TAU]);
+
+/* ---------- canvas + layout ---------- */
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+let W = 1280, H = 720, mode = "wide", scale = 1, dpr = 1, GA = 1, FS = 1;
+let SK, SD, INS, TAL, CH, stars = [];
+function layout(m) {
+  mode = m; FS = m === "wide" ? 1 : 1.08;
+  if (m === "wide") {
+    W = 1280; H = 720;
+    SK = { cx: 395, cy: 356, R: 300 };
+    SD = { xo: 72, x1: 752, cy: 336, hh: 86, hmax: 248, axisY: 636 };
+    INS = { x: 805, y: 36, w: 450, h: 280 };
+    TAL = { x: 805, y: 338, w: 450, h: 352 };
+    CH = { x: 805, y: 40, w: 450, h: 640 };
+  } else {
+    W = 560; H = 1050;
+    SK = { cx: 280, cy: 262, R: 238 };
+    SD = { xo: 34, x1: 540, cy: 244, hh: 66, hmax: 196, axisY: 482 };
+    INS = { x: 14, y: 540, w: 532, h: 206 };
+    TAL = { x: 14, y: 752, w: 532, h: 286 };
+    CH = { x: 14, y: 546, w: 532, h: 490 };
+  }
+  const sr = rng(4242); stars = [];
+  for (let i = 0; i < 260; i++) stars.push([sr() * W, sr() * H, sr() * 1.1 + 0.3, sr() * 0.5 + 0.12]);
+}
+function resize() {
+  const w = cv.parentElement.clientWidth || 800;
+  const m = w < 700 ? "narrow" : "wide";
+  if (m !== mode || !SK) layout(m);
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  scale = w / W;
+  cv.width = Math.round(w * dpr);
+  cv.height = Math.round(w * H / W * dpr);
+  cv.style.height = (w * H / W) + "px";
+  draw();
+}
+
+/* ---------- drawing helpers ---------- */
+const setA = a => { ctx.globalAlpha = clamp(a) * GA; };
+function font(o) { return `${o.italic ? "italic " : ""}${o.weight || 400} ${(o.size || 14) * FS}px ${o.serif ? SERIF : SANS}`; }
+function text(s, x, y, o = {}) {
+  ctx.font = font(o); ctx.fillStyle = o.color || COL.label;
+  ctx.textAlign = o.align || "left"; ctx.textBaseline = o.base || "alphabetic";
+  ctx.fillText(s, x, y); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+}
+function wrap(s, x, y, maxW, lh, o = {}) {
+  ctx.font = font(o); const words = s.split(" "); let line = "";
+  for (const w of words) {
+    const test = line ? line + " " + w : w;
+    if (ctx.measureText(test).width > maxW && line) { text(line, x, y, o); y += lh; line = w; ctx.font = font(o); }
+    else line = test;
+  }
+  if (line) text(line, x, y, o);
+  return y + lh;
+}
+// parts: [string, kind] with kind n (normal) i (italic serif) b (subscript) p (superscript) B (bold)
+function rich(parts, x, y, size, color, align = "left", maxW = 0) {
+  size *= FS;
+  const f = s => ({
+    n: `400 ${s}px ${SANS}`, B: `600 ${s}px ${SANS}`, i: `italic 400 ${s * 1.04}px ${SERIF}`,
+    b: `400 ${s * 0.68}px ${SANS}`, p: `400 ${s * 0.68}px ${SANS}`
+  });
+  const measure = s => { let w = 0; const F = f(s); for (const [t, k] of parts) { ctx.font = F[k]; w += ctx.measureText(t).width; } return w; };
+  let w = measure(size);
+  if (maxW && w > maxW) { size *= maxW / w; w = measure(size); }
+  const F = f(size);
+  let cx = align === "center" ? x - w / 2 : align === "right" ? x - w : x;
+  ctx.fillStyle = color; ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";
+  for (const [t, k] of parts) {
+    ctx.font = F[k];
+    const dy = k === "b" ? size * 0.26 : k === "p" ? -size * 0.42 : 0;
+    ctx.fillText(t, cx, y + dy); cx += ctx.measureText(t).width;
+  }
+  return w;
+}
+function circle(x, y, r) { ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); }
+function rrect(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath();
+}
+function drawGal(x, y, o, a, sc = 1) {
+  if (a <= 0.003) return;
+  const s = o.size * sc;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(o.ang); ctx.scale(1, o.q);
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, s * 1.7);
+  g.addColorStop(0, rgba(o.core, a)); g.addColorStop(0.3, rgba(o.mid, a * 0.62)); g.addColorStop(1, rgba(o.mid, 0));
+  ctx.fillStyle = g; ctx.globalAlpha = GA; circle(0, 0, s * 1.7); ctx.fill();
+  ctx.restore();
+}
+const hostSprite = (() => {
+  const c = document.createElement("canvas"); const S = 220; c.width = c.height = S; const g = c.getContext("2d"); const m = S / 2;
+  const gr = g.createRadialGradient(m, m, 0, m, m, m);
+  gr.addColorStop(0, "rgba(255,244,222,1)"); gr.addColorStop(0.07, "rgba(255,228,190,0.95)");
+  gr.addColorStop(0.28, "rgba(196,204,255,0.28)"); gr.addColorStop(1, "rgba(120,150,255,0)");
+  g.fillStyle = gr; g.fillRect(0, 0, S, S);
+  const r2 = rng(7);
+  for (let arm = 0; arm < 2; arm++) for (let i = 0; i < 900; i++) {
+    const th = i * 0.012, rr = 9 * Math.exp(0.24 * th); if (rr > S * 0.46) break;
+    const a = th + arm * Math.PI, j = (r2() - 0.5) * rr * 0.2;
+    g.fillStyle = `rgba(${190 + r2() * 50 | 0},${205 + r2() * 40 | 0},255,${0.1 + 0.28 * (1 - rr / (S * 0.46))})`;
+    g.beginPath(); g.arc(m + (rr + j) * Math.cos(a), m + (rr + j) * Math.sin(a), 0.8 + r2() * 1.7, 0, TAU); g.fill();
+  }
+  return c;
+})();
+function drawHostAt(x, y, size, a, sx = 1, rot = -0.45, squash = 0.56) {
+  if (a <= 0) return;
+  ctx.save(); ctx.translate(x, y); ctx.scale(sx, 1); ctx.rotate(rot); ctx.scale(1, squash);
+  ctx.globalAlpha = clamp(a) * GA; ctx.drawImage(hostSprite, -size / 2, -size / 2, size, size); ctx.restore();
+}
+
+/* ---------- geometry ---------- */
+const kpc = () => SK.R / 330;
+const sideX = z => SD.xo + (SD.x1 - SD.xo) * Math.sqrt(z / 0.3);
+const hw = x => Math.min(SD.hmax, SD.hh * (x - SD.xo) / (sideX(0.02) - SD.xo));
+const skyPos = o => [SK.cx + o.x * kpc(), SK.cy + o.y * kpc()];
+const sidePos = o => { const x = sideX(o.z); return [x, SD.cy + (o.y / 330) * hw(x)]; };
+function objPos(o, m) {
+  const [a, b] = skyPos(o), [c, d] = sidePos(o);
+  // a gentle arc so the swing reads as a rotation
+  const arc = Math.sin(m * Math.PI) * (o.x * kpc()) * 0.12;
+  return [lerp(a, c, m), lerp(b, d, m) - arc];
+}
+function conePath(xa, xb) {
+  ctx.beginPath(); ctx.moveTo(xa, SD.cy - hw(xa));
+  for (let x = xa; x <= xb; x += 4) ctx.lineTo(x, SD.cy - hw(x));
+  ctx.lineTo(xb, SD.cy - hw(xb)); ctx.lineTo(xb, SD.cy + hw(xb));
+  for (let x = xb; x >= xa; x -= 4) ctx.lineTo(x, SD.cy + hw(x));
+  ctx.lineTo(xa, SD.cy + hw(xa)); ctx.closePath();
+}
+
+/* ---------- state as a pure function of time ---------- */
+function state(T) {
+  const sg = (i, a, b) => ease(lin01(T, starts[i] + a, starts[i] + b));
+  const ln = (i, a, b) => lin01(T, starts[i] + a, starts[i] + b);
+  const s = { T };
+  s.idx = sceneAt(T); s.t = T - starts[s.idx];
+  s.host = sg(0, 0, 1.4); s.ring = sg(0, 1.2, 3); s.cand = ln(0, 2.6, 6.6);
+  s.m = sg(1, 1, 4) - sg(1, 7.6, 10.6) + sg(5, 0.5, 3) - sg(5, 9.6, 12.2);
+  s.tint = sg(1, 4.4, 5.8) - sg(1, 8.2, 10.2);
+  s.sweep = ln(2, 1, 11.5);
+  s.reveal = sg(3, 0.8, 2.6); s.fnRing = sg(3, 2.8, 4.3);
+  s.haze = sg(4, 0.8, 2.4) - sg(4, 7.6, 9.6);
+  s.fpGone = sg(4, 4, 6.5);
+  s.vol = sg(5, 3, 4.5) - sg(5, 8.6, 9.6);
+  s.nsGone = sg(5, 5.4, 7.6);
+  s.toFinal = sg(6, 3, 5); s.ghost = sg(6, 5, 7.5);
+  s.eq = sg(7, 0.4, 1.8); s.check = sg(7, 3.2, 4.6);
+  s.tally = sg(2, 0, 1) - sg(8, 0, 1);
+  s.r1 = sg(4, 0, 1); s.r2 = sg(5, 0, 1); s.r3 = sg(6, 0, 1);
+  s.chart8 = sg(8, 0.5, 1.5) - sg(9, 0, 1);
+  s.rs = ln(8, 1.6, 7.6);
+  s.stack = sg(9, 0, 1.5);
+  s.chart9 = sg(9, 1, 2);
+  s.np = ease(ln(9, 2, 11));
+  s.badge = sg(3, 0, 1) - sg(9, 0, 1);
+  const sc = scenes[s.idx];
+  s.insA = s.idx >= 8 ? 0 : Math.min(ease(lin01(s.t, 0, 0.6)), 1 - ease(lin01(s.t, sc.dur - 0.5, sc.dur)));
+  if (s.idx === scenes.length - 1 && s.t >= sc.dur - 0.01) s.insA = 0;
+  return s;
+}
+
+/* ---------- scene drawing ---------- */
+function drawBackdrop() {
+  ctx.globalAlpha = 1;
+  const g = ctx.createRadialGradient(SK.cx, SK.cy, 20, SK.cx, SK.cy, Math.max(W, H) * 0.8);
+  g.addColorStop(0, "#15235A"); g.addColorStop(0.45, "#0B1638"); g.addColorStop(1, "#060C22");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  for (const [x, y, r, a] of stars) { ctx.fillStyle = `rgba(220,228,255,${a})`; ctx.fillRect(x, y, r, r); }
+  ctx.strokeStyle = "rgba(170,190,255,0.12)"; ctx.lineWidth = 1; ctx.beginPath();
+  if (mode === "wide") { ctx.moveTo(782, 34); ctx.lineTo(782, H - 34); } else { ctx.moveTo(18, 526); ctx.lineTo(W - 18, 526); }
+  ctx.stroke();
+}
+
+function drawSkyUnderlay(s, a) {
+  const k = kpc();
+  // uniform false-positive "haze"
+  if (s.haze > 0) {
+    setA(a * s.haze);
+    ctx.beginPath(); ctx.arc(SK.cx, SK.cy, 300 * k, 0, TAU); ctx.arc(SK.cx, SK.cy, 36 * k, 0, TAU, true);
+    ctx.fillStyle = "rgba(255,122,102,0.10)"; ctx.fill("evenodd");
+    ctx.fillStyle = "rgba(255,140,120,0.55)";
+    const step = 30;
+    for (let gx = -300; gx <= 300; gx += step) for (let gy = -300; gy <= 300; gy += step * 0.866) {
+      const row = Math.round((gy + 300) / (step * 0.866));
+      const x = gx + (row % 2 ? step / 2 : 0), r = Math.hypot(x, gy);
+      if (r < 42 || r > 294) continue;
+      circle(SK.cx + x * k, SK.cy + gy * k, 1.3); ctx.fill();
+    }
+    setA(a * s.haze);
+    rich([["Ω", "i"], [": the annulus's solid angle", "n"]], SK.cx, SK.cy + 300 * k + 28, 15, "rgba(255,190,178,0.95)", "center");
+  }
+  // rings
+  if (s.ring > 0) {
+    setA(a * s.ring);
+    ctx.lineWidth = 1.3; ctx.strokeStyle = "rgba(170,195,255,0.55)";
+    ctx.beginPath(); ctx.arc(SK.cx, SK.cy, 300 * k, -Math.PI / 2, -Math.PI / 2 + s.ring * TAU); ctx.stroke();
+    ctx.setLineDash([3, 4]); ctx.strokeStyle = "rgba(170,195,255,0.5)";
+    ctx.beginPath(); ctx.arc(SK.cx, SK.cy, 36 * k, -Math.PI / 2, -Math.PI / 2 + s.ring * TAU); ctx.stroke(); ctx.setLineDash([]);
+    const lx = SK.cx + 300 * k * Math.cos(-0.72), ly = SK.cy + 300 * k * Math.sin(-0.72);
+    text("300 kpc", lx + 8, ly - 4, { size: 14, color: COL.soft });
+    ctx.strokeStyle = "rgba(170,195,255,0.4)"; ctx.beginPath(); ctx.moveTo(SK.cx + 36 * k * 0.72, SK.cy + 36 * k * 0.72);
+    ctx.lineTo(SK.cx + 58, SK.cy + 58); ctx.stroke();
+    text("36 kpc", SK.cx + 61, SK.cy + 68, { size: 13, color: COL.soft });
+  }
+  // CNN sweep
+  const on = clamp(s.sweep * 25) * clamp((1 - s.sweep) * 25);
+  if (on > 0) {
+    const ang = -Math.PI / 2 + s.sweep * TAU, R = 300 * k + 8;
+    for (let i = 0; i < 30; i++) {
+      setA(a * on * (1 - i / 30) * 0.16);
+      const aa = ang - i * 0.018;
+      ctx.strokeStyle = "#9FC3FF"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(SK.cx, SK.cy); ctx.lineTo(SK.cx + R * Math.cos(aa), SK.cy + R * Math.sin(aa)); ctx.stroke();
+    }
+    setA(a * on * 0.85); ctx.lineWidth = 1.5; ctx.strokeStyle = "#CFE0FF";
+    ctx.beginPath(); ctx.moveTo(SK.cx, SK.cy); ctx.lineTo(SK.cx + R * Math.cos(ang), SK.cy + R * Math.sin(ang)); ctx.stroke();
+  }
+  // radial sweep for the profile step
+  if (s.chart8 > 0 && s.rs > 0) {
+    const r = 36 + 264 * s.rs;
+    setA(a * s.chart8);
+    ctx.beginPath(); ctx.arc(SK.cx, SK.cy, r * k, 0, TAU); ctx.arc(SK.cx, SK.cy, 36 * k, 0, TAU, true);
+    ctx.fillStyle = "rgba(141,184,255,0.08)"; ctx.fill("evenodd");
+    ctx.strokeStyle = "rgba(190,205,255,0.3)"; ctx.lineWidth = 1; ctx.setLineDash([2, 4]);
+    for (const e of [80, 124, 168, 212, 256]) { circle(SK.cx, SK.cy, e * k); ctx.stroke(); }
+    ctx.setLineDash([]);
+    ctx.strokeStyle = COL.corr; ctx.lineWidth = 1.6; circle(SK.cx, SK.cy, r * k); ctx.stroke();
+    rich([["r", "i"], [` = ${Math.round(r)} kpc`, "n"]], SK.cx, SK.cy - r * k - 8, 14, COL.corr, "center");
+  }
+}
+
+function drawSideUnderlay(s, a) {
+  const xh = sideX(0.02), xa = sideX(0.015), xb = sideX(0.025), xc = sideX(0.03);
+  setA(a);
+  conePath(SD.xo, SD.x1); ctx.fillStyle = "rgba(140,170,255,0.05)"; ctx.fill();
+  ctx.strokeStyle = "rgba(160,185,255,0.32)"; ctx.lineWidth = 1; ctx.stroke();
+  // host redshift slice
+  conePath(xa, xb); ctx.fillStyle = "rgba(181,156,255,0.16)"; ctx.fill();
+  ctx.strokeStyle = "rgba(181,156,255,0.5)"; ctx.stroke();
+  text("host's redshift slice", xh, SD.cy + hw(xb) + 22, { size: 13, color: "rgba(206,190,255,0.95)", align: "center" });
+  rich([["Δ", "n"], ["z", "i"], [" = ±0.005", "n"]], xh, SD.cy + hw(xb) + 40, 13, "rgba(206,190,255,0.95)", "center");
+  // non-satellite volume V
+  if (s.vol > 0) {
+    setA(a * s.vol);
+    ctx.fillStyle = "rgba(245,190,70,0.30)"; ctx.strokeStyle = "rgba(245,196,81,0.8)";
+    conePath(SD.xo + 1, xa); ctx.fill(); ctx.stroke();
+    conePath(xb, xc); ctx.fill(); ctx.stroke();
+    const vx = (SD.xo + xa) / 2 + 20;
+    rich([["V", "i"]], vx, SD.cy + hw(vx) + 28, 22, COL.ns, "center");
+    rich([["V", "i"]], (xb + xc) / 2, SD.cy - hw(xc) - 12, 22, COL.ns, "center");
+    setA(a);
+  }
+  // z = 0.03 boundary
+  ctx.setLineDash([5, 5]); ctx.strokeStyle = "rgba(235,240,255,0.55)"; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(xc, SD.cy - hw(xc) - 64); ctx.lineTo(xc, SD.axisY); ctx.stroke(); ctx.setLineDash([]);
+  rich([["z", "i"], [" = 0.03", "n"]], xc + 8, SD.cy - hw(xc) - 64 + 12, 14, COL.label);
+  text("the CNN's low-z limit", xc + 8, SD.cy - hw(xc) - 64 + 30, { size: 13, color: COL.soft });
+  // axis
+  ctx.strokeStyle = "rgba(190,205,255,0.45)"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(SD.xo, SD.axisY); ctx.lineTo(SD.x1, SD.axisY); ctx.stroke();
+  for (const z of [0.01, 0.02, 0.03, 0.05, 0.1, 0.2, 0.3]) {
+    const x = sideX(z);
+    ctx.beginPath(); ctx.moveTo(x, SD.axisY); ctx.lineTo(x, SD.axisY + 5); ctx.stroke();
+    text(String(z), x, SD.axisY + 19, { size: 12, color: COL.soft, align: "center" });
+  }
+  rich([["redshift ", "n"], ["z", "i"], [", increasing distance from us", "n"]], SD.x1, SD.axisY - 10, 13, COL.soft, "right");
+  // observer
+  ctx.fillStyle = "#EEF2FF"; circle(SD.xo, SD.cy, 4); ctx.fill();
+  ctx.strokeStyle = "rgba(238,242,255,0.5)"; circle(SD.xo, SD.cy, 9); ctx.stroke();
+  text("us", SD.xo, SD.cy + 28, { size: 13, color: COL.label, align: "center" });
+}
+
+function drawObjects(s) {
+  const m = s.m;
+  for (const o of objs) {
+    const ap = clamp((s.cand - o.st * 0.75) / 0.25); if (ap <= 0) continue;
+    const cls = clamp((s.sweep * 1.04 - o.frac) * 30);
+    let a = ap;
+    if (!o.sel) a *= 1 - 0.62 * cls;
+    if (o.fp) a *= 1 - 0.72 * s.fpGone;
+    if (o.type === "ns") a *= 1 - 0.72 * s.nsGone;
+    if (o.type === "bg" && !o.fp) a *= 1 - 0.3 * s.tint * m;
+    const [x, y] = objPos(o, m);
+    drawGal(x, y, o, a, lerp(1, 0.85, m));
+  }
+}
+function drawHost(s) {
+  const x = lerp(SK.cx, sideX(0.02), s.m), y = lerp(SK.cy, SD.cy, s.m);
+  drawHostAt(x, y, 78, s.host, lerp(1, 0.3, s.m));
+  if (s.idx === 0 && s.host > 0) {
+    setA(s.host * (1 - s.ring * 0.0) * (1 - s.m));
+    text("host galaxy", SK.cx, SK.cy - 42, { size: 13, color: COL.label, align: "center" });
+  }
+}
+function strike(x, y, r, p, col) {
+  if (p <= 0) return;
+  ctx.strokeStyle = col; ctx.lineWidth = 2;
+  const d = r * 0.9;
+  ctx.beginPath(); ctx.moveTo(x - d, y - d); ctx.lineTo(x - d + 2 * d * clamp(p * 2), y - d + 2 * d * clamp(p * 2)); ctx.stroke();
+  if (p > 0.5) { ctx.beginPath(); ctx.moveTo(x + d, y - d); ctx.lineTo(x + d - 2 * d * clamp(p * 2 - 1), y - d + 2 * d * clamp(p * 2 - 1)); ctx.stroke(); }
+}
+function drawMarkers(s) {
+  const m = s.m;
+  for (const o of objs) {
+    const ap = clamp((s.cand - o.st * 0.75) / 0.25); if (ap <= 0) continue;
+    const [x, y] = objPos(o, m);
+    const rr = o.size * 1.45 + 6;
+    // side-view truth tint
+    if (s.tint > 0 && o.type !== "bg") {
+      setA(s.tint * ap);
+      ctx.strokeStyle = o.type === "sat" ? COL.sat : COL.ns; ctx.lineWidth = 1.8;
+      circle(x, y, rr); ctx.stroke();
+    }
+    if (o.sel) {
+      const cls = clamp((s.sweep * 1.04 - o.frac) * 30);
+      const gone = o.fp ? s.fpGone : o.type === "ns" ? s.nsGone : 0;
+      const ra = ap * cls * (1 - 0.6 * gone);
+      if (ra > 0) {
+        const pulse = cls < 1 ? (1 - cls) * 8 : 0;
+        setA(ra);
+        ctx.strokeStyle = rgba(mix(COL.neutral, classColor(o), s.reveal), 1); ctx.lineWidth = 1.7;
+        circle(x, y, rr + pulse); ctx.stroke();
+        setA(ap * cls); strike(x, y, rr, gone, classColor(o));
+      }
+    }
+    if (o.fn && s.fnRing > 0) {
+      setA(s.fnRing * ap);
+      ctx.setLineDash([3, 3]); ctx.strokeStyle = COL.fn; ctx.lineWidth = 1.6;
+      circle(x, y, rr); ctx.stroke(); ctx.setLineDash([]);
+      if (s.ghost > 0) {
+        setA(s.ghost * 0.3); ctx.fillStyle = COL.fn; circle(x, y, rr); ctx.fill();
+      }
+      if (s.idx === 6 && s.t < 4.5) {
+        const p = (s.T * 0.8 + o.st) % 1;
+        setA((1 - p) * 0.7 * s.fnRing); ctx.strokeStyle = COL.fn; ctx.lineWidth = 1.2;
+        circle(x, y, rr + p * 16); ctx.stroke();
+      }
+    }
+  }
+  // cutout bracket on the object the CNN is looking at
+  const on = clamp(s.sweep * 25) * clamp((1 - s.sweep) * 25);
+  if (on > 0) {
+    const cur = currentFeatured(s.sweep);
+    if (cur) {
+      const [x, y] = objPos(cur, m), h = 15, l = 6;
+      setA(on); ctx.strokeStyle = "#FFFFFF"; ctx.lineWidth = 1.5; ctx.beginPath();
+      for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+        ctx.moveTo(x + sx * h, y + sy * (h - l)); ctx.lineTo(x + sx * h, y + sy * h); ctx.lineTo(x + sx * (h - l), y + sy * h);
+      }
+      ctx.stroke();
+    }
+  }
+}
+function currentFeatured(sw) { let cur = null; for (const o of featured) { if (o.frac <= sw) cur = o; else break; } return cur; }
+
+function drawBadge(s) {
+  if (s.badge <= 0) return;
+  setA(s.badge * (1 - s.m));
+  const y = mode === "wide" ? H - 22 : SK.cy + SK.R + 16;
+  text("Toy host: contamination exaggerated so it's visible", mode === "wide" ? 40 : 24, y, { size: 13, color: COL.soft });
+}
+
+/* ---------- side panel: inset ---------- */
+function legendRow(x, y, kind, label, a) {
+  setA(a);
+  if (kind === "fn") { ctx.setLineDash([3, 3]); ctx.strokeStyle = COL.fn; ctx.lineWidth = 1.6; circle(x + 9, y - 5, 8); ctx.stroke(); ctx.setLineDash([]); }
+  else if (kind === "bg") { ctx.fillStyle = "rgba(255,196,150,0.8)"; circle(x + 9, y - 5, 3); ctx.fill(); }
+  else { ctx.strokeStyle = COL[kind]; ctx.lineWidth = 1.8; circle(x + 9, y - 5, 8); ctx.stroke(); }
+  text(label, x + 28, y, { size: 15, color: COL.label });
+}
+function drawInset(s) {
+  const r = INS, a = s.insA; if (a <= 0) return;
+  const x = r.x + 16; let y = r.y + 30;
+  const head = t => { setA(a); text(t, x, y, { size: 19, weight: 600, serif: true, color: "#F2F5FF" }); y += 34; };
+  const para = (t, o = {}) => { setA(a * (o.a ?? 1)); y = wrap(t, x, y, r.w - 32, 22, { size: 15, color: o.color || COL.label }); };
+  switch (s.idx) {
+    case 0: {
+      head("The search annulus");
+      para("Satellites are counted between 36 and 300 projected kpc from the host.");
+      y += 6;
+      para("At z = 0.02, 300 kpc spans about 12 arcminutes on the sky.", { color: COL.soft });
+      y += 6;
+      para("This is one of 7,542 xSAGA hosts: isolated NASA-Sloan Atlas centrals with log(M★/M☉) between 9.5 and 11.", { color: COL.soft });
+      break;
+    }
+    case 1: {
+      head("Turning the view sideways");
+      const t = s.tint;
+      legendRow(x, y, "sat", "Satellite: inside the host's halo", a * t); y += 30;
+      legendRow(x, y, "ns", "Low-z, but in front of or behind it", a * t); y += 30;
+      legendRow(x, y, "bg", "Background galaxy, z > 0.03", a * t); y += 36;
+      para("On the sky, all of these can land inside the same 300 kpc circle.", { a: t, color: COL.soft });
+      break;
+    }
+    case 2: drawCNN(s, r, a); break;
+    case 3: {
+      head("Scored against the truth");
+      const t = s.reveal, f = s.fnRing;
+      legendRow(x, y, "sat", "6 true positives: satellites found", a * t); y += 30;
+      legendRow(x, y, "fp", "2 false positives: high-z interlopers", a * t); y += 30;
+      legendRow(x, y, "ns", "2 non-satellites: low-z, wrong distance", a * t); y += 30;
+      legendRow(x, y, "fn", "4 false negatives: satellites missed", a * f); y += 34;
+      para("Of 10 selected, only 6 are satellites, and 4 satellites were missed.", { a: f, color: COL.soft });
+      break;
+    }
+    case 4: {
+      head("False positives scale with area");
+      setA(a); rich([["expected FPs = ⟨Σ", "n"], ["FP", "b"], ["⟩ × ", "n"], ["Ω", "i"]], x, y + 4, 20, "#FFD3CB"); y += 38;
+      para("The surface density is 3.04 per square degree, measured by cross-validation on SAGA fields.", { color: COL.label });
+      y += 6;
+      para("Here it predicts 2.0 contaminants. They are subtracted as a number, since nobody can say which two they are.", { color: COL.soft });
+      break;
+    }
+    case 5: {
+      head("Non-satellites scale with volume");
+      setA(a); rich([["expected = ⟨", "n"], ["n", "i"], ["nonsat", "b"], ["⟩ × ", "n"], ["V", "i"]], x, y + 4, 20, "#FBE3A6"); y += 38;
+      para("The density is 0.0142 per cubic Mpc. V is the pencil beam out to z = 0.03, minus the host's own redshift slice.", { color: COL.label });
+      y += 6;
+      para("Here it predicts 2.0 unrelated low-z galaxies.", { color: COL.soft });
+      break;
+    }
+    case 6: {
+      head("Completeness");
+      setA(a);
+      const bx = x, by = y - 4, bw = r.w - 32, bh = 16;
+      rrect(bx, by, bw, bh, 8); ctx.fillStyle = "rgba(181,156,255,0.16)"; ctx.fill();
+      rrect(bx, by, bw * 0.6 * clamp(s.t / 1.6), bh, 8); ctx.fillStyle = COL.sat; ctx.fill();
+      ctx.setLineDash([3, 3]); ctx.strokeStyle = COL.fn; rrect(bx, by, bw, bh, 8); ctx.stroke(); ctx.setLineDash([]);
+      y += 36;
+      rich([["⟨", "n"], ["C", "i"], ["⟩ = 0.6: the CNN finds about 60% of true low-z galaxies", "n"]], x, y, 15, COL.label, "left", r.w - 32); y += 30;
+      setA(a * clamp((s.t - 2.5) / 1)); rich([["6 surviving detections ÷ 0.6 = ", "n"], ["10", "B"], [" satellites", "n"]], x, y, 17, "#F2F5FF", "left", r.w - 32);
+      break;
+    }
+    case 7: {
+      head("The corrected count");
+      setA(a * s.eq);
+      rich([["N", "i"], ["sat", "b"], [" = (", "n"], ["N", "i"], ["pred", "b"], [" − ⟨Σ", "n"], ["FP", "b"], ["⟩", "n"], ["Ω", "i"], [" − ⟨", "n"], ["n", "i"], ["nonsat", "b"], ["⟩", "n"], ["V", "i"], [") / ⟨", "n"], ["C", "i"], ["⟩", "n"]], x, y + 6, 19, "#F2F5FF", "left", r.w - 32);
+      y += 42;
+      rich([["= (10 − 2 − 2) / 0.6 = ", "n"], ["10", "B"]], x, y, 22, "#F2F5FF", "left", r.w - 32);
+      y += 42;
+      setA(a * s.check);
+      ctx.strokeStyle = COL.sat; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(x, y - 7); ctx.lineTo(x + 6, y - 1); ctx.lineTo(x + 17, y - 14); ctx.stroke();
+      text("The true number of satellites here is also 10.", x + 28, y, { size: 15, color: COL.sat });
+      break;
+    }
+  }
+}
+function drawCNN(s, r, a) {
+  const cur = currentFeatured(s.sweep) || featured[0];
+  const since = (s.sweep - cur.frac) * 10.5; // seconds since the sweep reached it
+  const x = r.x + 16;
+  setA(a); text("What the CNN sees", x, r.y + 30, { size: 19, weight: 600, serif: true, color: "#F2F5FF" });
+  const cs = mode === "wide" ? 118 : 96, top = r.y + 50;
+  // cutout
+  rrect(x, top, cs, cs, 6); ctx.fillStyle = "#040919"; ctx.fill();
+  ctx.strokeStyle = "rgba(200,215,255,0.35)"; ctx.lineWidth = 1; ctx.stroke();
+  ctx.save(); rrect(x, top, cs, cs, 6); ctx.clip();
+  const specks = rng(Math.floor(cur.frac * 1e6));
+  for (let i = 0; i < 5; i++) drawGal(x + specks() * cs, top + specks() * cs, { size: 1.2 + specks(), q: 0.8, ang: 0, core: [255, 240, 225], mid: [255, 190, 150] }, a * 0.8, 1);
+  drawGal(x + cs / 2, top + cs / 2, cur, a, cs / 34);
+  ctx.restore();
+  setA(a); text("38″ grz cutout", x + cs / 2, top + cs + 18, { size: 12, color: COL.soft, align: "center" });
+  // layers
+  const gx = r.x + r.w - 58, b0 = x + cs + 24, b1 = gx - 40, nb = 5;
+  for (let i = 0; i < nb; i++) {
+    const bx = b0 + i * (b1 - b0) / (nb - 1) - i * 2, hh = cs * (0.92 - i * 0.13), dd = 12 + i * 4;
+    const lit = clamp(1 - Math.abs(since * 5 - i * 0.9) * 0.9);
+    setA(a);
+    ctx.beginPath(); ctx.moveTo(bx, top + cs / 2 - hh / 2); ctx.lineTo(bx + dd, top + cs / 2 - hh / 2 - dd * 0.6);
+    ctx.lineTo(bx + dd, top + cs / 2 + hh / 2 - dd * 0.6); ctx.lineTo(bx, top + cs / 2 + hh / 2); ctx.closePath();
+    ctx.fillStyle = rgba(mix("#2B3A74", "#9FC3FF", lit), 0.9); ctx.fill();
+    ctx.strokeStyle = "rgba(170,195,255,0.55)"; ctx.stroke();
+  }
+  setA(a); text("convolutional layers", (b0 + b1) / 2 + 6, top + cs + 18, { size: 12, color: COL.soft, align: "center" });
+  // gauge
+  const shown = cur.p * clamp(since * 3 - 1.2);
+  const decided = since * 3 - 1.2 >= 1;
+  rrect(gx, top, 16, cs, 8); ctx.fillStyle = "rgba(170,195,255,0.12)"; ctx.fill();
+  if (shown > 0) {
+    const fh = cs * shown;
+    rrect(gx, top + cs - fh, 16, fh, 8);
+    ctx.fillStyle = decided ? (cur.p > 0.5 ? "#EEF2FF" : "rgba(170,185,220,0.6)") : "#9FC3FF"; ctx.fill();
+  }
+  ctx.strokeStyle = "#FFFFFF"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(gx - 5, top + cs / 2); ctx.lineTo(gx + 21, top + cs / 2); ctx.stroke();
+  text("0.5", gx + 26, top + cs / 2 + 4, { size: 12, color: COL.soft });
+  rich([["p", "i"], ["CNN", "b"]], gx + 8, top + cs + 18, 13, COL.soft, "center");
+  setA(a * (decided ? 1 : 0.4));
+  text(shown.toFixed(2), gx + 8, top - 8, { size: 14, weight: 600, color: "#F2F5FF", align: "center" });
+  const by = Math.min(r.y + r.h - 6, top + cs + 50);
+  setA(a);
+  rich([["4.4 million candidates → 111,343 with ", "n"], ["p", "i"], ["CNN", "b"], [" > 0.5", "n"]], x, by, 15, COL.label, "left", r.w - 32);
+}
+
+/* ---------- side panel: tally ---------- */
+function drawTally(s) {
+  const r = TAL, a = s.tally; if (a <= 0) return;
+  const rowH = (r.h - 46) / 4, rowY = i => r.y + 46 + i * rowH;
+  const tokR = mode === "wide" ? 9 : 10, gap = mode === "wide" ? 27 : 30;
+  const slot = (row, j) => [r.x + 16 + tokR + j * gap, rowY(row) + 36];
+  setA(a); text("Counting this host's satellites", r.x + 16, r.y + 24, { size: 19, weight: 600, serif: true, color: "#F2F5FF" });
+  const labels = [
+    [[["CNN-selected, ", "n"], ["N", "i"], ["pred", "b"]], 1],
+    [[["− expected false positives, ⟨Σ", "n"], ["FP", "b"], ["⟩", "n"], ["Ω", "i"]], s.r1],
+    [[["− expected non-satellites, ⟨", "n"], ["n", "i"], ["nonsat", "b"], ["⟩", "n"], ["V", "i"]], s.r2],
+    [[["÷ completeness ⟨", "n"], ["C", "i"], ["⟩ = 0.6, giving ", "n"], ["N", "i"], ["sat", "b"]], s.r3]
+  ];
+  labels.forEach(([parts, la], i) => { if (la > 0) { setA(a * la); rich(parts, r.x + 16, rowY(i) + 14, 14, COL.soft, "left", r.w - 90); } });
+  // tokens
+  let nPred = 0;
+  for (const t of tokens) {
+    const cls = clamp((s.sweep * 1.04 - t.o.frac) * 30); if (cls <= 0) continue;
+    nPred += cls >= 1 ? 1 : 0;
+    const [sx, sy] = slot(0, t.j);
+    let [tx, ty] = [sx, sy], p = 0;
+    if (t.kind === "fp") { p = s.fpGone; [tx, ty] = slot(1, t.k); }
+    else if (t.kind === "ns") { p = s.nsGone; [tx, ty] = slot(2, t.k); }
+    else { p = s.toFinal; [tx, ty] = slot(3, t.k); }
+    const col = rgba(mix(COL.neutral, t.kind === "fp" ? COL.fp : t.kind === "ns" ? COL.ns : COL.sat, s.reveal), 1);
+    if (p > 0) { setA(a * 0.35 * p); ctx.strokeStyle = "rgba(220,230,255,0.9)"; ctx.lineWidth = 1; circle(sx, sy, tokR); ctx.stroke(); }
+    const x = lerp(sx, tx, p), y = lerp(sy, ty, p) - Math.sin(p * Math.PI) * 18;
+    setA(a * cls); ctx.fillStyle = col; circle(x, y, tokR * (0.6 + 0.4 * cls)); ctx.fill();
+    if ((t.kind === "fp" || t.kind === "ns") && p >= 1) { setA(a); ctx.strokeStyle = "#0A1433"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x - 4, y); ctx.lineTo(x + 4, y); ctx.stroke(); }
+  }
+  for (let g = 0; g < 4; g++) {
+    if (s.ghost <= 0) break;
+    const ga = clamp(s.ghost * 4 - g * 0.9);
+    const [x, y] = slot(3, 6 + g);
+    setA(a * ga); ctx.fillStyle = "rgba(181,156,255,0.28)"; circle(x, y, tokR); ctx.fill();
+    ctx.setLineDash([3, 3]); ctx.strokeStyle = COL.fn; ctx.lineWidth = 1.5; circle(x, y, tokR); ctx.stroke(); ctx.setLineDash([]);
+  }
+  // values
+  const vx = r.x + r.w - 14;
+  const val = (i, str, va, color = "#F2F5FF") => { if (va > 0) { setA(a * va); text(str, vx, rowY(i) + 42, { size: 22, weight: 600, color, align: "right" }); } };
+  val(0, String(nPred), nPred > 0 ? 1 : 0);
+  val(1, "−2.0", s.fpGone, "#FFB3A6");
+  val(2, "−2.0", s.nsGone, "#FBE3A6");
+  val(3, (6 + 4 * s.ghost).toFixed(1), s.toFinal, s.ghost >= 1 ? COL.sat : "#F2F5FF");
+}
+
+/* ---------- charts ---------- */
+function axes(r, a, ymax, yticks, title, ylab) {
+  const px = r.x + 52, py = r.y + 58, pw = r.w - 70, ph = r.h - 128;
+  setA(a);
+  text(title, r.x + 16, r.y + 26, { size: 19, weight: 600, serif: true, color: "#F2F5FF" });
+  ctx.strokeStyle = "rgba(190,205,255,0.14)"; ctx.lineWidth = 1;
+  for (const v of yticks) { const y = py + ph - v / ymax * ph; ctx.beginPath(); ctx.moveTo(px, y); ctx.lineTo(px + pw, y); ctx.stroke(); text(String(v), px - 8, y + 4, { size: 12, color: COL.soft, align: "right" }); }
+  ctx.strokeStyle = "rgba(190,205,255,0.5)"; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, py + ph); ctx.lineTo(px + pw, py + ph); ctx.stroke();
+  const X = rr => px + (rr - 36) / 264 * pw, Y = n => py + ph - n / ymax * ph;
+  for (const t of [36, 100, 200, 300]) { ctx.beginPath(); ctx.moveTo(X(t), py + ph); ctx.lineTo(X(t), py + ph + 5); ctx.stroke(); text(String(t), X(t), py + ph + 19, { size: 12, color: COL.soft, align: "center" }); }
+  rich([["projected radius ", "n"], ["r", "i"], [" (kpc)", "n"]], px + pw / 2, py + ph + 40, 13, COL.soft, "center");
+  ctx.save(); ctx.translate(r.x + 14, py + ph / 2); ctx.rotate(-Math.PI / 2); rich(ylab, 0, 0, 13, COL.soft, "center"); ctx.restore();
+  return { X, Y, px, py, pw, ph };
+}
+function curve(fn, X, Y, r0, r1, color, width, dash) {
+  if (r1 <= r0) return;
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dash || []);
+  ctx.beginPath();
+  for (let rr = r0; rr <= r1 + 0.001; rr += 1) { const x = X(rr), y = Y(fn(rr)); rr === r0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+  ctx.stroke(); ctx.setLineDash([]);
+}
+const selR = objs.filter(o => o.sel).map(o => o.r), satRs = objs.filter(o => o.type === "sat").map(o => o.r);
+const areaF = r => (r * r - 36 * 36) / (300 * 300 - 36 * 36);
+const rawN = r => selR.filter(v => v < r).length;
+const corrN = r => (rawN(r) - 4 * areaF(r)) / 0.6;
+const trueN = r => satRs.filter(v => v < r).length;
+const edges = [36, 80, 124, 168, 212, 256, 300];
+function poly(fn, r1, X, Y, color, width, dash, dots) {
+  const pts = [];
+  for (let i = 0; i < edges.length; i++) {
+    if (edges[i] <= r1) pts.push([edges[i], fn(edges[i])]);
+    else { const e0 = edges[i - 1], f = (r1 - e0) / (edges[i] - e0); pts.push([r1, lerp(fn(e0), fn(edges[i]), f)]); break; }
+  }
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dash || []);
+  ctx.beginPath(); pts.forEach(([r, v], i) => i ? ctx.lineTo(X(r), Y(v)) : ctx.moveTo(X(r), Y(v))); ctx.stroke(); ctx.setLineDash([]);
+  if (dots) { ctx.fillStyle = color; for (const [r, v] of pts) if (edges.includes(r)) { circle(X(r), Y(v), dots); ctx.fill(); } }
+}
+function drawChart8(s) {
+  const a = s.chart8; if (a <= 0) return;
+  const g = axes(CH, a, 12, [0, 2, 4, 6, 8, 10, 12], "Cumulative count for this host", [["N", "i"], ["(<", "n"], ["r", "i"], [")", "n"]]);
+  const r1 = 36 + 264 * s.rs;
+  setA(a * 0.5); ctx.strokeStyle = "rgba(190,205,255,0.35)"; ctx.setLineDash([2, 4]); ctx.lineWidth = 1;
+  for (const e of edges.slice(1, -1)) { ctx.beginPath(); ctx.moveTo(g.X(e), g.py); ctx.lineTo(g.X(e), g.py + g.ph); ctx.stroke(); }
+  ctx.setLineDash([]);
+  setA(a);
+  if (r1 > 36.5) {
+    poly(rawN, r1, g.X, g.Y, "rgba(230,236,255,0.62)", 2, [], 3);
+    curve(r => 4 * areaF(r), g.X, g.Y, 36, r1, COL.fp, 2, [5, 4]);
+    poly(trueN, r1, g.X, g.Y, COL.sat, 2, [6, 5], 3);
+    poly(corrN, r1, g.X, g.Y, COL.corr, 3, [], 4.5);
+  }
+  const lx = g.px + 12; let ly = g.py + 16;
+  const item = (col, dash, label, w = 2.5) => { setA(a); ctx.strokeStyle = col; ctx.lineWidth = w; ctx.setLineDash(dash); ctx.beginPath(); ctx.moveTo(lx, ly - 4); ctx.lineTo(lx + 26, ly - 4); ctx.stroke(); ctx.setLineDash([]); text(label, lx + 34, ly, { size: 14, color: COL.label }); ly += 24; };
+  item("rgba(230,236,255,0.62)", [], "CNN-selected, uncorrected", 2);
+  item(COL.fp, [5, 4], "expected contaminants, growing with area", 2);
+  item(COL.corr, [], "corrected", 3);
+  item(COL.sat, [6, 5], "true satellites (known only in the toy)", 2);
+  setA(a); text("dotted lines: annular bin edges", g.px + g.pw - 4, g.py + g.ph - 10, { size: 12, color: COL.soft, align: "right" });
+}
+function drawChart9(s) {
+  const a = s.chart9; if (a <= 0) return;
+  const n = Math.max(1, Math.round(Math.pow(7542, s.np)));
+  const g = axes(CH, a, 3, [0, 1, 2, 3], "Stacked mean profile", [["mean ", "n"], ["N", "i"], ["sat", "b"], ["(<", "n"], ["r", "i"], [")", "n"]]);
+  const mean = r => 2.1 * Math.pow((r - 36) / 264, 0.88);
+  const sig = 1.15 / Math.sqrt(n);
+  ctx.save(); ctx.beginPath(); ctx.rect(g.px, g.py, g.pw + 4, g.ph); ctx.clip();
+  for (const [g1, g2, ph] of boot) {
+    const f = r => { const u = (r - 36) / 264; return Math.max(0, mean(r) * (1 + sig * g1 * 0.9) + sig * g2 * 0.9 * Math.sin(Math.PI * u + ph * 0.2) * u); };
+    setA(a * 0.35); curve(f, g.X, g.Y, 36, 300, "#6F9BEA", 1.1);
+  }
+  setA(a); curve(mean, g.X, g.Y, 36, 300, "#F2F5FF", 2.6);
+  ctx.restore();
+  setA(a); text(`${n.toLocaleString("en-US")} ${n === 1 ? "host" : "hosts"}`, g.px + 12, g.py + 18, { size: 16, weight: 600, color: "#F2F5FF" });
+  text("thin lines: bootstrap resamples", g.px + 12, g.py + 40, { size: 13, color: COL.soft });
+  text("schematic, after Fig. 19", g.px + g.pw - 4, g.py + g.ph - 10, { size: 12, color: COL.soft, align: "right" });
+}
+
+/* ---------- stacking grid ---------- */
+function drawStack(s) {
+  const a = s.stack; if (a <= 0) return;
+  const n = Math.max(1, Math.round(Math.pow(7542, s.np)));
+  const side = SK.R * 2 - 40, x0 = SK.cx - side / 2, y0 = SK.cy - side / 2;
+  const cols = Math.ceil(Math.sqrt(n)), cell = side / cols;
+  const pr = rng(99);
+  for (let i = 0; i < n; i++) {
+    const cx = x0 + (i % cols + 0.5) * cell, cy = y0 + (Math.floor(i / cols) + 0.5) * cell;
+    const seed = pr();
+    if (cell >= 16) {
+      drawHostAt(cx, cy, Math.min(cell * 0.5, 90), a, 1, seed * 3, 0.5 + seed * 0.4);
+      const ns = Math.floor(pr() * 4);
+      setA(a * 0.9); ctx.fillStyle = "#BFD3FF";
+      for (let j = 0; j < ns; j++) { const ang = pr() * TAU, rr = (0.18 + pr() * 0.26) * cell; circle(cx + rr * Math.cos(ang), cy + rr * Math.sin(ang), Math.max(1, cell * 0.022)); ctx.fill(); }
+    } else {
+      setA(a * (0.45 + seed * 0.45)); ctx.fillStyle = "#D8E2FF";
+      const d = Math.max(1.2, cell * 0.42); ctx.fillRect(cx - d / 2, cy - d / 2, d, d);
+    }
+  }
+  setA(a);
+  const ty = mode === "wide" ? H - 24 : SK.cy + SK.R + 18;
+  const fin = clamp((s.np - 0.97) * 30);
+  if (fin < 1) { setA(a * (1 - fin)); text(`${n.toLocaleString("en-US")} ${n === 1 ? "host" : "hosts"} stacked`, SK.cx, ty, { size: 16, weight: 600, color: "#F2F5FF", align: "center" }); }
+  if (fin > 0) { setA(a * fin); text("11,449 CNN-selected galaxies → 16,241 corrected satellites", SK.cx, ty, { size: 16, weight: 600, color: "#F2F5FF", align: "center" }); }
+}
+
+/* ---------- frame ---------- */
+let T = 0;
+function draw() {
+  if (!SK) return;
+  const s = state(T);
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+  GA = 1; drawBackdrop();
+  GA = 1 - s.stack;
+  if (GA > 0.001) {
+    if (s.m > 0.001) drawSideUnderlay(s, s.m);
+    if (s.m < 0.999) drawSkyUnderlay(s, 1 - s.m);
+    drawObjects(s); drawHost(s); drawMarkers(s); drawBadge(s);
+  }
+  GA = 1;
+  drawStack(s);
+  drawInset(s); drawTally(s); drawChart8(s); drawChart9(s);
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- UI ---------- */
+const $ = id => document.getElementById(id);
+const scrub = $("scrub"), timeEl = $("time"), playBtn = $("play");
+scrub.max = TOTAL.toFixed(2);
+const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let playing = !reduced, last = null, shownIdx = -1;
+const fmt = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+const stepBtns = scenes.map((sc, i) => {
+  const li = document.createElement("li"), b = document.createElement("button");
+  b.type = "button"; b.innerHTML = `<span class="n">${i + 1}</span><span class="lbl">${sc.short}</span>`;
+  b.setAttribute("aria-label", `Step ${i + 1}: ${sc.short}`);
+  b.addEventListener("click", () => jump(i));
+  li.appendChild(b); $("steps").appendChild(li); return b;
+});
+function syncUI() {
+  const idx = sceneAt(T);
+  if (idx !== shownIdx) {
+    shownIdx = idx;
+    $("where").textContent = `Step ${idx + 1} of ${scenes.length}`;
+    $("capTitle").textContent = scenes[idx].title;
+    $("capBody").innerHTML = scenes[idx].body;
+    stepBtns.forEach((b, i) => i === idx ? b.setAttribute("aria-current", "step") : b.removeAttribute("aria-current"));
+  }
+  scrub.value = T.toFixed(2);
+  timeEl.textContent = `${fmt(T)} / ${fmt(TOTAL)}`;
+  const ended = T >= TOTAL - 0.001;
+  $("icoPause").style.display = playing ? "" : "none";
+  $("icoPlay").style.display = !playing && !ended ? "" : "none";
+  $("icoAgain").style.display = !playing && ended ? "" : "none";
+  playBtn.setAttribute("aria-label", playing ? "Pause" : ended ? "Replay" : "Play");
+}
+function jump(i) { T = starts[clamp(i, 0, scenes.length - 1)] + 0.001; last = null; draw(); syncUI(); }
+function toggle() {
+  if (!playing && T >= TOTAL - 0.001) T = 0;
+  playing = !playing; last = null; syncUI();
+}
+playBtn.addEventListener("click", toggle);
+$("prev").addEventListener("click", () => { const i = sceneAt(T); jump(T - starts[i] < 1.2 ? i - 1 : i); });
+$("next").addEventListener("click", () => jump(sceneAt(T) + 1));
+scrub.addEventListener("input", () => { T = parseFloat(scrub.value); last = null; draw(); syncUI(); });
+document.addEventListener("keydown", e => {
+  const tag = e.target && e.target.tagName;
+  if (e.key === " " && tag !== "BUTTON" && tag !== "INPUT") { e.preventDefault(); toggle(); }
+  else if (tag !== "INPUT" && e.key === "ArrowRight") { e.preventDefault(); $("next").click(); }
+  else if (tag !== "INPUT" && e.key === "ArrowLeft") { e.preventDefault(); $("prev").click(); }
+});
+function tick(now) {
+  if (playing) {
+    if (last != null) T = Math.min(TOTAL, T + Math.min(0.1, (now - last) / 1000));
+    last = now;
+    if (T >= TOTAL) { playing = false; last = null; }
+    draw(); syncUI();
+  }
+  requestAnimationFrame(tick);
+}
+window.addEventListener("resize", resize);
+if (window.ResizeObserver) new ResizeObserver(resize).observe(cv.parentElement);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(draw);
+const params = new URLSearchParams(location.search);
+if (params.has("t")) { T = parseFloat(params.get("t")) || 0; playing = false; }
+resize();
+if (reduced && !params.has("t")) T = starts[3] + 5; // a representative still frame
+draw(); syncUI();
+requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
